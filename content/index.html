@@ -15,24 +15,56 @@
     font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
     background: #0b0f14;
     color: #e6edf3;
+    padding: 2rem 1rem;
+    box-sizing: border-box;
   }
   main {
-    text-align: center;
-    padding: 2.5rem 3rem;
+    width: 100%;
+    max-width: 420px;
+    padding: 2rem 2.25rem 2.25rem;
     border: 1px solid #2a323c;
     border-radius: 12px;
     background: #11161c;
   }
-  h1 { margin: 0 0 0.5rem; font-size: 1.4rem; }
-  p { margin: 0.25rem 0; color: #9aa7b2; }
-  a { color: #6cb6ff; }
+  h1 { margin: 0 0 0.25rem; font-size: 1.3rem; }
+  .sub { margin: 0 0 1.5rem; color: #9aa7b2; font-size: 0.9rem; }
+  ul { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 0.6rem; }
+  li a {
+    display: block;
+    padding: 0.85rem 1rem;
+    border: 1px solid #2a323c;
+    border-radius: 8px;
+    background: #161c24;
+    color: #e6edf3;
+    text-decoration: none;
+    font-size: 0.95rem;
+    transition: border-color 0.15s ease, background 0.15s ease;
+  }
+  li a:hover { border-color: #6cb6ff; background: #1a2029; }
+  li a .desc { display: block; margin-top: 0.15rem; color: #9aa7b2; font-size: 0.8rem; }
+  footer { margin-top: 1.75rem; text-align: center; }
+  footer a { color: #6cb6ff; font-size: 0.85rem; }
 </style>
 </head>
 <body>
 <main>
-  <h1>You're logged in.</h1>
-  <p>This is a placeholder for the private area of netjimb.com.</p>
-  <p><a href="/signout">Sign out</a></p>
+  <h1>private.netjimb.com</h1>
+  <p class="sub">Quick links</p>
+  <ul>
+    <li>
+      <a href="https://netjimb.github.io/scriptfinder/">
+        ScriptFinder
+        <span class="desc">Browse the PowerShell script library</span>
+      </a>
+    </li>
+    <li>
+      <a href="https://netjimb.github.io/rcacronym/">
+        RC Acronym Lookup
+        <span class="desc">Red Cross acronym reference</span>
+      </a>
+    </li>
+  </ul>
+  <footer><a href="/signout">Sign out</a></footer>
 </main>
 </body>
 </html>
