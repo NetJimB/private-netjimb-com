@@ -27,11 +27,12 @@ async function getParam(name) {
 }
 
 async function buildAuthenticator() {
-  const [region, userPoolId, userPoolAppId, userPoolDomain] = await Promise.all([
+  const [region, userPoolId, userPoolAppId, userPoolDomain, siteDomain] = await Promise.all([
     getParam('region'),
     getParam('user-pool-id'),
     getParam('user-pool-client-id'),
     getParam('user-pool-domain'),
+    getParam('domain-name'),
   ]);
 
   return new Authenticator({
@@ -44,6 +45,19 @@ async function buildAuthenticator() {
     httpOnly: true,
     sameSite: 'Lax',
     logLevel: 'silent',
+    logoutConfiguration: {
+      // Matches the <a href="/signout"> link in content/index.html. When a
+      // request's path matches this, cognito-at-edge revokes the refresh
+      // token and clears the session cookies itself before redirecting.
+      logoutUri: '/signout',
+      // Clearing our own cookies isn't a full sign-out on its own: Cognito's
+      // Hosted UI domain keeps its own separate SSO session, so a redirect
+      // straight back to this site would silently re-authenticate on the
+      // next request. Routing through Cognito's own /logout endpoint first
+      // clears that too, then it redirects on to logout_uri  -  which must
+      // be one of UserPoolClient's LogoutURLs in template.yaml.
+      logoutRedirectUri: `https://${userPoolDomain}/logout?client_id=${userPoolAppId}&logout_uri=${encodeURIComponent(`https://${siteDomain}/`)}`,
+    },
   });
 }
 
