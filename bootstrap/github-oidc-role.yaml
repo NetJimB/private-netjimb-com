@@ -1,0 +1,163 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: >
+  One-time bootstrap: lets GitHub Actions in a specific repo/branch deploy the
+  private-netjimb-com stack via OIDC federation, with no long-lived AWS keys
+  stored as GitHub secrets. Deploy this once, manually, with your own AWS
+  credentials — GitHub Actions can't create the very role it needs to assume.
+
+Parameters:
+  GitHubOrg:
+    Type: String
+    Description: GitHub org or username that owns the repo, e.g. NetJimB.
+  RepositoryName:
+    Type: String
+    Description: Repository name, e.g. private-netjimb-com.
+  Branch:
+    Type: String
+    Default: main
+    Description: Branch allowed to assume the deploy role.
+  CreateOidcProvider:
+    Type: String
+    Default: 'true'
+    AllowedValues: ['true', 'false']
+    Description: >
+      Leave as true unless your AWS account already has a GitHub Actions OIDC
+      provider registered (an account can only have one per URL — if `aws iam
+      list-open-id-connect-providers` already shows token.actions.githubusercontent.com,
+      set this to false and fill in ExistingOidcProviderArn instead).
+  ExistingOidcProviderArn:
+    Type: String
+    Default: ''
+    Description: Only used when CreateOidcProvider is false.
+  HostedZoneId:
+    Type: String
+    Description: Route 53 hosted zone ID for netjimb.com (same one you pass to the stack itself).
+
+Conditions:
+  ShouldCreateProvider: !Equals [!Ref CreateOidcProvider, 'true']
+
+Resources:
+
+  GitHubOidcProvider:
+    Type: AWS::IAM::OIDCProvider
+    Condition: ShouldCreateProvider
+    Properties:
+      Url: https://token.actions.githubusercontent.com
+      ClientIdList:
+        - sts.amazonaws.com
+      # GitHub's well-known thumbprint. AWS validates GitHub's OIDC endpoint
+      # certificate chain directly now, but the field is still required.
+      ThumbprintList:
+        - 6938fd4d98bab03faadb97b34396831e3780aea1
+
+  DeployRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: private-netjimb-com-github-deploy
+      MaxSessionDuration: 3600
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Federated: !If
+                - ShouldCreateProvider
+                - !Ref GitHubOidcProvider
+                - !Ref ExistingOidcProviderArn
+            Action: sts:AssumeRoleWithWebIdentity
+            Condition:
+              StringEquals:
+                token.actions.githubusercontent.com:aud: sts.amazonaws.com
+              StringLike:
+                token.actions.githubusercontent.com:sub: !Sub 'repo:${GitHubOrg}/${RepositoryName}:ref:refs/heads/${Branch}'
+      Policies:
+        - PolicyName: private-netjimb-com-deploy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+
+              # SAM/CloudFormation itself, scoped to this stack and the SAM CLI
+              # managed-bucket stack it creates on first `--resolve-s3` deploy.
+              - Sid: CloudFormation
+                Effect: Allow
+                Action: 'cloudformation:*'
+                Resource:
+                  - !Sub 'arn:aws:cloudformation:us-east-1:${AWS::AccountId}:stack/private-netjimb-com/*'
+                  - !Sub 'arn:aws:cloudformation:us-east-1:${AWS::AccountId}:stack/aws-sam-cli-managed-default/*'
+
+              # S3: the content bucket this stack creates, plus the SAM CLI
+              # managed deployment-artifacts bucket.
+              - Sid: S3
+                Effect: Allow
+                Action: 's3:*'
+                Resource:
+                  - !Sub 'arn:aws:s3:::private-netjimb-com-${AWS::AccountId}'
+                  - !Sub 'arn:aws:s3:::private-netjimb-com-${AWS::AccountId}/*'
+                  - 'arn:aws:s3:::aws-sam-cli-managed-default*'
+
+              # Lambda@Edge function this stack owns.
+              - Sid: Lambda
+                Effect: Allow
+                Action: 'lambda:*'
+                Resource:
+                  - !Sub 'arn:aws:lambda:us-east-1:${AWS::AccountId}:function:private-netjimb-com-*'
+
+              # IAM: only the Lambda execution role this stack creates, plus
+              # PassRole so CloudFormation/Lambda can hand it to the function.
+              - Sid: LambdaExecutionRole
+                Effect: Allow
+                Action:
+                  - iam:CreateRole
+                  - iam:DeleteRole
+                  - iam:GetRole
+                  - iam:PutRolePolicy
+                  - iam:DeleteRolePolicy
+                  - iam:GetRolePolicy
+                  - iam:AttachRolePolicy
+                  - iam:DetachRolePolicy
+                  - iam:TagRole
+                  - iam:PassRole
+                Resource:
+                  - !Sub 'arn:aws:iam::${AWS::AccountId}:role/private-netjimb-com-*'
+
+              # SSM parameters this stack owns.
+              - Sid: SSM
+                Effect: Allow
+                Action:
+                  - ssm:PutParameter
+                  - ssm:GetParameter
+                  - ssm:GetParameters
+                  - ssm:DeleteParameter
+                  - ssm:AddTagsToResource
+                  - ssm:RemoveTagsFromResource
+                Resource:
+                  - !Sub 'arn:aws:ssm:us-east-1:${AWS::AccountId}:parameter/private-netjimb-com/*'
+
+              # Route 53: only the netjimb.com hosted zone, for the ACM
+              # validation record and the CloudFront alias record.
+              - Sid: Route53
+                Effect: Allow
+                Action:
+                  - route53:ChangeResourceRecordSets
+                  - route53:GetChange
+                  - route53:ListResourceRecordSets
+                Resource:
+                  - !Sub 'arn:aws:route53:::hostedzone/${HostedZoneId}'
+                  - 'arn:aws:route53:::change/*'
+
+              # Cognito, ACM and CloudFront don't support useful resource-level
+              # scoping for the create/describe actions SAM needs, so these
+              # are the broadest grants here. Still limited to these three
+              # services, nothing else.
+              - Sid: CognitoAcmCloudFront
+                Effect: Allow
+                Action:
+                  - 'cognito-idp:*'
+                  - 'acm:*'
+                  - 'cloudfront:*'
+                Resource: '*'
+
+Outputs:
+  DeployRoleArn:
+    Value: !GetAtt DeployRole.Arn
+    Description: Put this in the repo's Actions variables as AWS_DEPLOY_ROLE_ARN.

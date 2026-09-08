@@ -1,0 +1,84 @@
+name: Deploy private.netjimb.com
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'template.yaml'
+      - 'lambda-auth/**'
+      - 'content/**'
+      - '.github/workflows/deploy.yml'
+  workflow_dispatch: {}
+
+# Only one deploy at a time; a second push while one is running waits rather
+# than racing it against the same CloudFormation stack.
+concurrency:
+  group: private-netjimb-com-deploy
+  cancel-in-progress: false
+
+permissions:
+  id-token: write   # required to request the OIDC token
+  contents: read
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: us-east-1
+
+      - name: Set up SAM CLI
+        uses: aws-actions/setup-sam@v2
+
+      - name: Install Lambda auth dependencies
+        working-directory: lambda-auth
+        run: npm install --omit=dev
+
+      - name: sam build
+        run: sam build --template-file template.yaml
+
+      - name: sam deploy
+        run: |
+          sam deploy \
+            --stack-name private-netjimb-com \
+            --region us-east-1 \
+            --capabilities CAPABILITY_IAM \
+            --parameter-overrides \
+              "DomainName=${{ vars.DOMAIN_NAME }}" \
+              "HostedZoneId=${{ vars.HOSTED_ZONE_ID }}" \
+              "CognitoDomainPrefix=${{ vars.COGNITO_DOMAIN_PREFIX }}" \
+            --resolve-s3 \
+            --no-confirm-changeset \
+            --no-fail-on-empty-changeset
+
+      - name: Explain a taken Cognito domain prefix
+        if: failure()
+        run: |
+          REASON=$(aws cloudformation describe-stack-events \
+            --stack-name private-netjimb-com \
+            --region us-east-1 \
+            --query "StackEvents[?LogicalResourceId=='UserPoolDomain' && contains(ResourceStatus, 'FAILED')].ResourceStatusReason" \
+            --output text || true)
+          if [ -n "$REASON" ]; then
+            echo "::error::Cognito domain prefix '${{ vars.COGNITO_DOMAIN_PREFIX }}' looks taken: $REASON — update the COGNITO_DOMAIN_PREFIX repo variable and re-run."
+          fi
+
+      - name: Sync private page content
+        run: |
+          BUCKET=$(aws cloudformation describe-stacks \
+            --stack-name private-netjimb-com \
+            --region us-east-1 \
+            --query "Stacks[0].Outputs[?OutputKey=='ContentBucketName'].OutputValue" \
+            --output text)
+          aws s3 sync content/ "s3://$BUCKET/" --region us-east-1 --delete

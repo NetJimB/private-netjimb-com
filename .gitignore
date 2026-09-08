@@ -1,0 +1,10 @@
+# SAM build output
+.aws-sam/
+
+# Node
+node_modules/
+npm-debug.log*
+
+# OS
+.DS_Store
+Thumbs.db

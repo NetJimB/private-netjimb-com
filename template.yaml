@@ -1,0 +1,247 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: >
+  Private, login-gated page at a netjimb.com subdomain. Access is by admin
+  invitation only (no public sign-up) via a Cognito User Pool. A Lambda@Edge
+  function in front of CloudFront checks for a valid session before serving
+  any content from the private S3 bucket.
+
+  IMPORTANT: This stack must be deployed in us-east-1. Lambda@Edge functions
+  can only be created in us-east-1, and the ACM certificate used by CloudFront
+  must also live in us-east-1 regardless of where your other resources are.
+
+Parameters:
+  DomainName:
+    Type: String
+    Default: private.netjimb.com
+    Description: The subdomain the private page will be served from.
+  HostedZoneId:
+    Type: String
+    Description: Route 53 hosted zone ID for netjimb.com.
+  CognitoDomainPrefix:
+    Type: String
+    Description: >
+      Globally-unique prefix for the Cognito Hosted UI domain, e.g.
+      "netjimb-private". Ends up as <prefix>.auth.us-east-1.amazoncognito.com.
+
+Resources:
+
+  # ---------- Cognito: admin-invited users only ----------
+
+  UserPool:
+    Type: AWS::Cognito::UserPool
+    Properties:
+      UserPoolName: private-netjimb-com
+      UsernameAttributes: [email]
+      AutoVerifiedAttributes: [email]
+      AdminCreateUserConfig:
+        AllowAdminCreateUserOnly: true
+        InviteMessageTemplate:
+          EmailSubject: "You've been invited to private.netjimb.com"
+          EmailMessage: >
+            Hello, Jim has invited you to private.netjimb.com. Your username
+            is {username} and your temporary password is {####}. You'll be
+            asked to set a new password the first time you log in.
+      Policies:
+        PasswordPolicy:
+          MinimumLength: 12
+          RequireUppercase: true
+          RequireLowercase: true
+          RequireNumbers: true
+          RequireSymbols: false
+      Schema:
+        - Name: email
+          Required: true
+          Mutable: true
+
+  UserPoolDomain:
+    Type: AWS::Cognito::UserPoolDomain
+    Properties:
+      Domain: !Ref CognitoDomainPrefix
+      UserPoolId: !Ref UserPool
+
+  UserPoolClient:
+    Type: AWS::Cognito::UserPoolClient
+    Properties:
+      UserPoolId: !Ref UserPool
+      GenerateSecret: false
+      AllowedOAuthFlows: [code]
+      AllowedOAuthFlowsUserPoolClient: true
+      AllowedOAuthScopes: [openid, email, profile]
+      SupportedIdentityProviders: [COGNITO]
+      CallbackURLs:
+        - !Sub 'https://${DomainName}/parseauth'
+      LogoutURLs:
+        - !Sub 'https://${DomainName}/'
+      ExplicitAuthFlows:
+        - ALLOW_USER_SRP_AUTH
+        - ALLOW_REFRESH_TOKEN_AUTH
+
+  # Lambda@Edge can't use environment variables, so the auth function reads
+  # its Cognito config from SSM Parameter Store at cold start instead. This
+  # also avoids a two-stage deploy (Cognito IDs are only known after this
+  # same stack creates them).
+
+  ParamRegion:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: /private-netjimb-com/region
+      Type: String
+      Value: !Ref AWS::Region
+
+  ParamUserPoolId:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: /private-netjimb-com/user-pool-id
+      Type: String
+      Value: !Ref UserPool
+
+  ParamUserPoolClientId:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: /private-netjimb-com/user-pool-client-id
+      Type: String
+      Value: !Ref UserPoolClient
+
+  ParamUserPoolDomain:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: /private-netjimb-com/user-pool-domain
+      Type: String
+      Value: !Sub '${CognitoDomainPrefix}.auth.${AWS::Region}.amazoncognito.com'
+
+  # ---------- Private content bucket ----------
+
+  ContentBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub 'private-netjimb-com-${AWS::AccountId}'
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+
+  ContentBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref ContentBucket
+      PolicyDocument:
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: cloudfront.amazonaws.com
+            Action: s3:GetObject
+            Resource: !Sub '${ContentBucket.Arn}/*'
+            Condition:
+              StringEquals:
+                AWS:SourceArn: !Sub 'arn:aws:cloudfront::${AWS::AccountId}:distribution/${Distribution}'
+
+  OriginAccessControl:
+    Type: AWS::CloudFront::OriginAccessControl
+    Properties:
+      OriginAccessControlConfig:
+        Name: private-netjimb-com-oac
+        OriginAccessControlOriginType: s3
+        SigningBehavior: always
+        SigningProtocol: sigv4
+
+  # ---------- TLS certificate (must be us-east-1 for CloudFront) ----------
+
+  Certificate:
+    Type: AWS::CertificateManager::Certificate
+    Properties:
+      DomainName: !Ref DomainName
+      ValidationMethod: DNS
+      DomainValidationOptions:
+        - DomainName: !Ref DomainName
+          HostedZoneId: !Ref HostedZoneId
+
+  # ---------- Lambda@Edge auth check ----------
+
+  AuthFunctionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: [lambda.amazonaws.com, edgelambda.amazonaws.com]
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: ReadAuthParams
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action: ssm:GetParameter
+                Resource: !Sub 'arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/private-netjimb-com/*'
+
+  AuthFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: lambda-auth/
+      Handler: index.handler
+      Runtime: nodejs20.x
+      MemorySize: 128
+      Timeout: 5
+      Role: !GetAtt AuthFunctionRole.Arn
+      AutoPublishAlias: live
+
+  # ---------- CloudFront ----------
+
+  Distribution:
+    Type: AWS::CloudFront::Distribution
+    Properties:
+      DistributionConfig:
+        Enabled: true
+        Comment: private-netjimb-com
+        Aliases:
+          - !Ref DomainName
+        DefaultRootObject: index.html
+        ViewerCertificate:
+          AcmCertificateArn: !Ref Certificate
+          SslSupportMethod: sni-only
+          MinimumProtocolVersion: TLSv1.2_2021
+        Origins:
+          - Id: s3origin
+            DomainName: !GetAtt ContentBucket.RegionalDomainName
+            OriginAccessControlId: !Ref OriginAccessControl
+            S3OriginConfig:
+              OriginAccessIdentity: ''
+        DefaultCacheBehavior:
+          TargetOriginId: s3origin
+          ViewerProtocolPolicy: redirect-to-https
+          AllowedMethods: [GET, HEAD]
+          CachedMethods: [GET, HEAD]
+          # Managed-CachingDisabled: auth-gated HTML must not be cached at the edge.
+          CachePolicyId: 4135ea2d-6df8-44a3-9df3-4b5a84be39ad
+          LambdaFunctionAssociations:
+            - EventType: viewer-request
+              LambdaFunctionARN: !Ref AuthFunction.Version
+
+  DnsRecord:
+    Type: AWS::Route53::RecordSet
+    Properties:
+      HostedZoneId: !Ref HostedZoneId
+      Name: !Ref DomainName
+      Type: A
+      AliasTarget:
+        DNSName: !GetAtt Distribution.DomainName
+        # Fixed hosted zone ID CloudFront always uses for alias records.
+        HostedZoneId: Z2FDTNDATAQYW2
+
+Outputs:
+  SiteURL:
+    Value: !Sub 'https://${DomainName}'
+  ContentBucketName:
+    Value: !Ref ContentBucket
+  UserPoolId:
+    Value: !Ref UserPool
+  CognitoHostedUIDomain:
+    Value: !Sub '${CognitoDomainPrefix}.auth.${AWS::Region}.amazoncognito.com'
+  DistributionId:
+    Value: !Ref Distribution
