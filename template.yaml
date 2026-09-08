@@ -129,6 +129,18 @@ Resources:
       Tags:
         Project: !Ref ProjectTag
 
+  # Needed by the Lambda to build the Cognito Hosted UI /logout redirect
+  # (see lambda-auth/index.js) — it must exactly match one of
+  # UserPoolClient's LogoutURLs below.
+  ParamSiteDomain:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: /private-netjimb-com/domain-name
+      Type: String
+      Value: !Ref DomainName
+      Tags:
+        Project: !Ref ProjectTag
+
   # ---------- Private content bucket ----------
 
   ContentBucket:
