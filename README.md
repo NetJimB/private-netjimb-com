@@ -102,6 +102,22 @@ needed.
 Re-run `.\deploy.ps1` with the same parameters — SAM/CloudFormation will update the
 existing stack rather than create a new one.
 
+## Tagging for cross-region visibility
+
+This whole stack has to live in **us-east-1** — Lambda@Edge functions can only be
+created there, and the ACM certificate CloudFront uses for a custom domain must
+also live in us-east-1, regardless of where your other stacks are. There's no way
+around that for a single CloudFormation stack.
+
+If you have other stacks in a different region (e.g. us-west-1) and want to see
+everything together without hunting through the region switcher, use **Resource
+Groups & Tag Editor** in the console — it's a global, cross-region view filtered
+by tag. Every taggable resource here (Cognito, S3, the Lambda function, its IAM
+role, the CloudFront distribution, the ACM cert, the SSM parameters) carries a
+`Project` tag, controlled by the `ProjectTag` parameter/variable (defaults to
+`private-netjimb-com`). Set it to match whatever tag value your other stack
+already uses, and both show up together in Tag Editor regardless of region.
+
 ## Running this from GitHub instead (CI/CD)
 
 This repo includes `.github/workflows/deploy.yml`, which runs the same
@@ -148,6 +164,7 @@ keys are stored as GitHub secrets.
    | `HOSTED_ZONE_ID` | your Route 53 hosted zone ID |
    | `COGNITO_DOMAIN_PREFIX` | the globally-unique prefix you picked |
    | `DOMAIN_NAME` | `private.netjimb.com` |
+   | `PROJECT_TAG` | optional — see [Tagging](#tagging-for-cross-region-visibility) below; defaults to `private-netjimb-com` if omitted |
 
    None of these are secret (the role can only be assumed from this specific
    repo/branch), so plain Variables are fine — no need for Secrets.

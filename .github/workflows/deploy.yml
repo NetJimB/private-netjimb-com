@@ -58,6 +58,7 @@ jobs:
               "DomainName=${{ vars.DOMAIN_NAME }}" \
               "HostedZoneId=${{ vars.HOSTED_ZONE_ID }}" \
               "CognitoDomainPrefix=${{ vars.COGNITO_DOMAIN_PREFIX }}" \
+              "ProjectTag=${{ vars.PROJECT_TAG || 'private-netjimb-com' }}" \
             --resolve-s3 \
             --no-confirm-changeset \
             --no-fail-on-empty-changeset

@@ -10,7 +10,7 @@
 
     describe-user-pool-domain returns an empty DomainDescription for a
     prefix nobody has claimed, and a populated one (with a Status) for a
-    prefix that's in use — that's the check this script relies on. It's a
+    prefix that's in use  -  that's the check this script relies on. It's a
     long-standing, widely-used technique, though AWS doesn't spell it out
     in the API docs, so treat "available" here as "very likely available"
     and let the actual deploy be the final word.

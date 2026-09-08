@@ -23,6 +23,15 @@ Parameters:
     Description: >
       Globally-unique prefix for the Cognito Hosted UI domain, e.g.
       "netjimb-private". Ends up as <prefix>.auth.us-east-1.amazoncognito.com.
+  ProjectTag:
+    Type: String
+    Default: private-netjimb-com
+    Description: >
+      Value for a "Project" tag applied to every taggable resource here.
+      Set it to match a tag you already use on other stacks (e.g. one in
+      us-west-1) so Resource Groups & Tag Editor in the console can show
+      them together regardless of region — CloudFront/Lambda@Edge/ACM force
+      this stack itself to live in us-east-1, but tags aren't region-bound.
 
 Resources:
 
@@ -53,6 +62,8 @@ Resources:
         - Name: email
           Required: true
           Mutable: true
+      UserPoolTags:
+        Project: !Ref ProjectTag
 
   UserPoolDomain:
     Type: AWS::Cognito::UserPoolDomain
@@ -88,6 +99,8 @@ Resources:
       Name: /private-netjimb-com/region
       Type: String
       Value: !Ref AWS::Region
+      Tags:
+        Project: !Ref ProjectTag
 
   ParamUserPoolId:
     Type: AWS::SSM::Parameter
@@ -95,6 +108,8 @@ Resources:
       Name: /private-netjimb-com/user-pool-id
       Type: String
       Value: !Ref UserPool
+      Tags:
+        Project: !Ref ProjectTag
 
   ParamUserPoolClientId:
     Type: AWS::SSM::Parameter
@@ -102,6 +117,8 @@ Resources:
       Name: /private-netjimb-com/user-pool-client-id
       Type: String
       Value: !Ref UserPoolClient
+      Tags:
+        Project: !Ref ProjectTag
 
   ParamUserPoolDomain:
     Type: AWS::SSM::Parameter
@@ -109,6 +126,8 @@ Resources:
       Name: /private-netjimb-com/user-pool-domain
       Type: String
       Value: !Sub '${CognitoDomainPrefix}.auth.${AWS::Region}.amazoncognito.com'
+      Tags:
+        Project: !Ref ProjectTag
 
   # ---------- Private content bucket ----------
 
@@ -121,6 +140,9 @@ Resources:
         BlockPublicPolicy: true
         IgnorePublicAcls: true
         RestrictPublicBuckets: true
+      Tags:
+        - Key: Project
+          Value: !Ref ProjectTag
 
   ContentBucketPolicy:
     Type: AWS::S3::BucketPolicy
@@ -156,6 +178,9 @@ Resources:
       DomainValidationOptions:
         - DomainName: !Ref DomainName
           HostedZoneId: !Ref HostedZoneId
+      Tags:
+        - Key: Project
+          Value: !Ref ProjectTag
 
   # ---------- Lambda@Edge auth check ----------
 
@@ -179,6 +204,9 @@ Resources:
               - Effect: Allow
                 Action: ssm:GetParameter
                 Resource: !Sub 'arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter/private-netjimb-com/*'
+      Tags:
+        - Key: Project
+          Value: !Ref ProjectTag
 
   AuthFunction:
     Type: AWS::Serverless::Function
@@ -190,6 +218,8 @@ Resources:
       Timeout: 5
       Role: !GetAtt AuthFunctionRole.Arn
       AutoPublishAlias: live
+      Tags:
+        Project: !Ref ProjectTag
 
   # ---------- CloudFront ----------
 
@@ -222,6 +252,9 @@ Resources:
           LambdaFunctionAssociations:
             - EventType: viewer-request
               LambdaFunctionARN: !Ref AuthFunction.Version
+      Tags:
+        - Key: Project
+          Value: !Ref ProjectTag
 
   DnsRecord:
     Type: AWS::Route53::RecordSet

@@ -32,6 +32,10 @@ Parameters:
   HostedZoneId:
     Type: String
     Description: Route 53 hosted zone ID for netjimb.com (same one you pass to the stack itself).
+  ProjectTag:
+    Type: String
+    Default: private-netjimb-com
+    Description: Value for a "Project" tag on the deploy role, matching template.yaml's ProjectTag.
 
 Conditions:
   ShouldCreateProvider: !Equals [!Ref CreateOidcProvider, 'true']
@@ -69,7 +73,14 @@ Resources:
               StringEquals:
                 token.actions.githubusercontent.com:aud: sts.amazonaws.com
               StringLike:
-                token.actions.githubusercontent.com:sub: !Sub 'repo:${GitHubOrg}/${RepositoryName}:ref:refs/heads/${Branch}'
+                # GitHub changed the OIDC sub claim format for repos created
+                # on/after July 15, 2026, to embed immutable numeric org/repo
+                # IDs (repo:org@123/repo@456:ref:...) instead of plain names.
+                # Both patterns are listed so this keeps working regardless
+                # of which format a given repo actually emits.
+                token.actions.githubusercontent.com:sub:
+                  - !Sub 'repo:${GitHubOrg}/${RepositoryName}:ref:refs/heads/${Branch}'
+                  - !Sub 'repo:${GitHubOrg}@*/${RepositoryName}@*:ref:refs/heads/${Branch}'
       Policies:
         - PolicyName: private-netjimb-com-deploy
           PolicyDocument:
@@ -84,6 +95,35 @@ Resources:
                 Resource:
                   - !Sub 'arn:aws:cloudformation:us-east-1:${AWS::AccountId}:stack/private-netjimb-com/*'
                   - !Sub 'arn:aws:cloudformation:us-east-1:${AWS::AccountId}:stack/aws-sam-cli-managed-default/*'
+
+              # Any template using "Transform: AWS::Serverless-2016-10-31"
+              # (both our template.yaml and SAM CLI's own managed-bucket
+              # bootstrap template) needs this on top of the stack-scoped
+              # grant above — the transform macro is an AWS-owned resource
+              # outside your account, so it's never covered by an ARN scoped
+              # to your own account's stacks.
+              - Sid: SamTransform
+                Effect: Allow
+                Action: cloudformation:CreateChangeSet
+                Resource: !Sub 'arn:aws:cloudformation:${AWS::Region}:aws:transform/Serverless-2016-10-31'
+
+              # The first time any CloudFront distribution in the account
+              # associates a Lambda@Edge function, AWS auto-creates a
+              # service-linked role to let CloudFront replicate it to edge
+              # locations — and to write distribution logs. That creation
+              # needs explicit permission; once it exists (one-time, for the
+              # whole account) this grant is never exercised again.
+              - Sid: ServiceLinkedRoles
+                Effect: Allow
+                Action: iam:CreateServiceLinkedRole
+                Resource:
+                  - !Sub 'arn:aws:iam::${AWS::AccountId}:role/aws-service-role/replicator.lambda.amazonaws.com/AWSServiceRoleForLambdaReplicator'
+                  - !Sub 'arn:aws:iam::${AWS::AccountId}:role/aws-service-role/logger.cloudfront.amazonaws.com/AWSServiceRoleForCloudFrontLogger'
+                Condition:
+                  StringEquals:
+                    iam:AWSServiceName:
+                      - replicator.lambda.amazonaws.com
+                      - logger.cloudfront.amazonaws.com
 
               # S3: the content bucket this stack creates, plus the SAM CLI
               # managed deployment-artifacts bucket.
@@ -140,6 +180,7 @@ Resources:
                 Action:
                   - route53:ChangeResourceRecordSets
                   - route53:GetChange
+                  - route53:GetHostedZone
                   - route53:ListResourceRecordSets
                 Resource:
                   - !Sub 'arn:aws:route53:::hostedzone/${HostedZoneId}'
@@ -156,6 +197,9 @@ Resources:
                   - 'acm:*'
                   - 'cloudfront:*'
                 Resource: '*'
+      Tags:
+        - Key: Project
+          Value: !Ref ProjectTag
 
 Outputs:
   DeployRoleArn:

@@ -5,7 +5,7 @@
 
 .DESCRIPTION
     Builds the Lambda@Edge auth function, deploys the CloudFormation/SAM stack
-    (must run in us-east-1 — required for both Lambda@Edge and the CloudFront
+    (must run in us-east-1  -  required for both Lambda@Edge and the CloudFront
     ACM certificate), then uploads the placeholder page to the new S3 bucket.
 
 .PARAMETER HostedZoneId
@@ -18,6 +18,11 @@
 
 .PARAMETER DomainName
     The subdomain to serve the private page from. Defaults to private.netjimb.com.
+
+.PARAMETER ProjectTag
+    Value for a "Project" tag applied to every taggable resource, so
+    Resource Groups & Tag Editor in the console can list this alongside
+    other stacks (in any region) that share the same tag value.
 
 .EXAMPLE
     .\deploy.ps1 -HostedZoneId Z0123456789ABCDEFGHI -CognitoDomainPrefix netjimb-private
@@ -32,7 +37,9 @@ param(
 
     [string]$DomainName = 'private.netjimb.com',
 
-    [string]$StackName = 'private-netjimb-com'
+    [string]$StackName = 'private-netjimb-com',
+
+    [string]$ProjectTag = 'private-netjimb-com'
 )
 
 $ErrorActionPreference = 'Stop'
@@ -65,7 +72,7 @@ sam deploy `
     --stack-name $StackName `
     --region us-east-1 `
     --capabilities CAPABILITY_IAM `
-    --parameter-overrides "DomainName=$DomainName" "HostedZoneId=$HostedZoneId" "CognitoDomainPrefix=$CognitoDomainPrefix" `
+    --parameter-overrides "DomainName=$DomainName" "HostedZoneId=$HostedZoneId" "CognitoDomainPrefix=$CognitoDomainPrefix" "ProjectTag=$ProjectTag" `
     --resolve-s3 `
     --no-confirm-changeset `
     --no-fail-on-empty-changeset

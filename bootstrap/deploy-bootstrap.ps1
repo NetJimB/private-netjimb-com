@@ -21,6 +21,11 @@
     registered (check with: aws iam list-open-id-connect-providers). You'll
     be prompted for its ARN.
 
+.PARAMETER ProjectTag
+    Value for a "Project" tag on the deploy role itself  -  matches the tag
+    template.yaml puts on the site's own resources by default. Set it to
+    whatever value you use to group things in Resource Groups & Tag Editor.
+
 .EXAMPLE
     .\deploy-bootstrap.ps1 -GitHubOrg NetJimB -RepositoryName private-netjimb-com -HostedZoneId Z0123456789ABCDEFGHI
 #>
@@ -37,7 +42,9 @@ param(
 
     [string]$Branch = 'main',
 
-    [switch]$SkipOidcProvider
+    [switch]$SkipOidcProvider,
+
+    [string]$ProjectTag = 'private-netjimb-com'
 )
 
 $ErrorActionPreference = 'Stop'
@@ -48,6 +55,7 @@ $params = @(
     "RepositoryName=$RepositoryName"
     "HostedZoneId=$HostedZoneId"
     "Branch=$Branch"
+    "ProjectTag=$ProjectTag"
 )
 
 if ($SkipOidcProvider) {
@@ -78,5 +86,6 @@ Write-Host "  AWS_DEPLOY_ROLE_ARN   = $roleArn"
 Write-Host "  HOSTED_ZONE_ID        = $HostedZoneId"
 Write-Host "  COGNITO_DOMAIN_PREFIX = <pick a globally-unique prefix, e.g. netjimb-private>"
 Write-Host "  DOMAIN_NAME           = private.netjimb.com"
+Write-Host "  PROJECT_TAG           = $ProjectTag   (optional  -  defaults to this if you skip it)"
 Write-Host ""
 Write-Host "Then push to $Branch and the deploy.yml workflow takes it from there."
